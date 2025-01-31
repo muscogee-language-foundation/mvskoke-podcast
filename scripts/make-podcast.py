@@ -99,8 +99,15 @@ def compile(script, narrator_lines, audio_dict, output_file):
 
     for line in script:
         print(line)
+        i=0
         for m in re.finditer(audio_pattern, line):
+            if i==0 and m.start>0:
+                first_phrase=line[0:m.start]
+                print(first_phrase)
+            if m.end!=len(line):
+                last_phrase=line[m.start]
             print(m)
+            i+=1
 
     print("Compilation complete.")
     return True
