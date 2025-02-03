@@ -7,6 +7,8 @@ from google.cloud import texttospeech
 
 tts_dir="tts_output"
 tts_metadata="tts_output/metadata.tsv"
+space = r"\*+"
+mvskoke_audio_pattern = r"\[(.*)\]"
 
 def read_script(filename):
     lines = []
@@ -16,10 +18,9 @@ def read_script(filename):
     return lines
 
 def get_audio_names(script):
-    audio_pattern = r"\[(.*)\]"
     audio_names = []
     for line in script:
-        matches = re.findall(audio_pattern, line)
+        matches = re.findall(mvskoke_audio_pattern, line)
         # print(matches)
         for m in matches:
             audio_names.append(m)
@@ -40,7 +41,7 @@ def check_audio(audio_names, asset_dir):
         if not found:
             raise FileNotFoundError(1, "no audio file for \"" + a +  "\" in directory "+asset_dir)
     print("Audio check complete!")
-    print(f'Found {count} audio files matching {len(audio_names)} phrases')
+    print(f'Found {count} audio files matching {len(audio_names)} phrases in {asset_dir}')
     return audio_dict
 
 def render_phrase(client, phrase):
@@ -53,7 +54,7 @@ def render_phrase(client, phrase):
     
     synthesis_input = texttospeech.SynthesisInput(text=phrase)
     voice = texttospeech.VoiceSelectionParams(
-        language_code="en-US", ssml_gender=texttospeech.SsmlVoiceGender.FEMALE
+        language_code="en-US", name="en-US-Journey-D"
     )
     audio_config = texttospeech.AudioConfig(
         audio_encoding=texttospeech.AudioEncoding.MP3
@@ -69,7 +70,7 @@ def render_phrase(client, phrase):
     return out_filename
 
 def render_tts(script, overwrite):
-    audio_pattern = r"\[.*\]"
+
     if overwrite:
         phrase_dict = {}
     else:
@@ -81,14 +82,16 @@ def render_tts(script, overwrite):
     # speak all the phrases
     count = 0
     for line in script:
-        phrases = re.split(audio_pattern, line)
-        # print(phrases)
-        for p in phrases:
-            p = p.strip()
-            if p and p!="..." and p not in phrase_dict:
-                phrase_file = render_phrase(client, p)
-                phrase_dict[p] = phrase_file
-                count += 1
+        line = line.strip()
+        print('processing line: '+line)
+        if re.match(space, line):
+            continue
+        elif re.match(mvskoke_audio_pattern, line):
+            continue
+        if line not in phrase_dict:
+            phrase_file = render_phrase(client, line)
+            phrase_dict[line] = phrase_file
+            count += 1
 
     #save phrase dict to file
     write_dict(phrase_dict, tts_metadata)
