@@ -8,7 +8,7 @@ from google.cloud import texttospeech
 tts_dir="tts_output"
 tts_metadata="tts_output/metadata.tsv"
 space = r"\*+"
-mvskoke_audio_pattern = r"\[(.*)\]"
+mvskoke_audio_pattern = r"\[.*?\]"
 
 def read_script(filename):
     lines = []
@@ -26,24 +26,6 @@ def get_audio_names(script):
             audio_names.append(m)
     return audio_names
 
-def check_audio(audio_names, asset_dir):
-    extensions=[".wav",".WAV",".mp3"]
-    audio_dict = {}
-    count = 0
-    for a in audio_names:
-        found=False
-        for ext in extensions:
-            fname = asset_dir+"/"+a+ext
-            if os.path.isfile(fname):
-                audio_dict[a] = fname
-                found=True
-                count += 1
-        if not found:
-            raise FileNotFoundError(1, "no audio file for \"" + a +  "\" in directory "+asset_dir)
-    print("Audio check complete!")
-    print(f'Found {count} audio files matching {len(audio_names)} phrases in {asset_dir}')
-    return audio_dict
-
 def render_phrase(client, phrase):
 
     # format filename, remove punctuation
@@ -53,9 +35,15 @@ def render_phrase(client, phrase):
     out_filename=out_filename.lower()
     
     synthesis_input = texttospeech.SynthesisInput(text=phrase)
+    # standard voice
     voice = texttospeech.VoiceSelectionParams(
-        language_code="en-US", name="en-US-Journey-D"
+        language_code="en-US", name="en-US-Standard-G"
     )
+
+    # # premium voice
+    # voice = texttospeech.VoiceSelectionParams(
+    #     language_code="en-US", name="en-US-Journey-D"
+    # )
     audio_config = texttospeech.AudioConfig(
         audio_encoding=texttospeech.AudioEncoding.MP3
     )
@@ -66,7 +54,7 @@ def render_phrase(client, phrase):
     with open(tts_dir+"/"+out_filename, "wb") as out:
         # Write the response to the output file.
         out.write(response.audio_content)
-        print(f'Audio content written to file "{out_filename}"')
+    print(f'Audio content written to file "{out_filename}"')
     return out_filename
 
 def render_tts(script, overwrite):
@@ -83,12 +71,25 @@ def render_tts(script, overwrite):
     count = 0
     for line in script:
         line = line.strip()
-        print('processing line: '+line)
+        if not line:
+            continue
         if re.match(space, line):
             continue
-        elif re.match(mvskoke_audio_pattern, line):
-            continue
-        if line not in phrase_dict:
+        elif re.search(mvskoke_audio_pattern, line):
+            # has mvskoke audio
+            for phrase in re.split(mvskoke_audio_pattern, line):
+                if re.match(mvskoke_audio_pattern, phrase):
+                    # skip mvskoke audio
+                    continue
+                phrase = phrase.strip()
+                phrase = phrase.strip('.')
+                phrase = phrase.strip(',')
+                if phrase:
+                    if phrase not in phrase_dict:
+                        phrase_file = render_phrase(client, phrase)
+                        phrase_dict[phrase] = phrase_file
+                        count += 1
+        elif line not in phrase_dict:
             phrase_file = render_phrase(client, line)
             phrase_dict[line] = phrase_file
             count += 1
@@ -102,6 +103,10 @@ def render_tts(script, overwrite):
     return phrase_dict
 
 def write_dict(data, filename):
+    # make sure directory exists
+    if not os.path.exists(os.path.dirname(filename)):
+        os.makedirs(os.path.dirname(filename))
+
     # create list of strings
     list_of_strings = [ f'{key}\t{data[key]}' for key in data ]
 
@@ -129,6 +134,5 @@ if __name__ == '__main__':
 
     script = read_script(args.script_file)
     audios = get_audio_names(script)
-    audio_dict = check_audio(audios, args.asset_folder)
     narrator_lines = render_tts(script, args.overwrite)
     print('Done.')

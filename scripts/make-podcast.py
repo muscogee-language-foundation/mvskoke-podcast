@@ -6,6 +6,7 @@ import pydub
 tts_dir="tts_output"
 tts_metadata="tts_output/metadata.tsv"
 space = r"\*+"
+audio_pattern = r"\[.*?\]"
 
 def read_script(filename):
     lines = []
@@ -23,37 +24,70 @@ def read_audio_info(filename):
             audio_dict[line[0]] = line[1]
     return audio_dict
 
-def get_mvskoke_audio(line, asset_dir):
+def get_mvskoke_audio(line, asset_dir) -> pydub.AudioSegment:
     filename = line.strip("[]")
+    filename = filename.replace(" ", "-")
+    sound = None
     # search asset_dir for filename ending in .mp3 or .wav
     if os.path.isfile(os.path.join(asset_dir, filename+".wav")):
-        return os.path.join(asset_dir, filename+".wav")
+        sound = pydub.AudioSegment.from_file(os.path.join(asset_dir, filename+".wav"))
     elif os.path.isfile(os.path.join(asset_dir, filename+".mp3")):
-        return os.path.join(asset_dir, filename+".mp3")
+        sound = pydub.AudioSegment.from_file(os.path.join(asset_dir, filename+".mp3"))
     else:
-        raise FileNotFoundError(1, "no audio file for \"" + filename +  "\" in directory "+asset_dir)
-
+        # print error
+        print("no audio file for \"" + filename +  "\" in directory "+asset_dir)
+        # return silence at approximate duration of the line
+        length = max(int(len(line) / 10), 1) * 200
+        sound = pydub.AudioSegment.silent(duration=length)
+    return sound.pan(-1)
+    
 def get_en_audio(line, tts_dir, audio_dict):
-    # if line is only periods
+    line = line.strip()
+    # if line is only '*'
+    sound = None
     if re.match(space, line):
         # silence
-        return line
-    return os.path.join(tts_dir, audio_dict[line])
+        return pydub.AudioSegment.silent(duration=500*len(line))
+    sound = pydub.AudioSegment.from_file(os.path.join(tts_dir, audio_dict[line]))
+    return sound.pan(1)
+
+def split_audio(line):
+    spans = []
+    prev_end = 0
+    for m in re.finditer(audio_pattern, line):
+        if m.start() > prev_end:
+            spans.append(line[prev_end:m.start()])
+        spans.append(m.group())
+        prev_end = m.end()
+    if prev_end < len(line):
+        spans.append(line[prev_end:])
+    return spans
+    
 
 def compile(script, asset_dir, tts_dir, audio_dict):
-    
-    audio_pattern = r"\[.*?\]"
 
     audio_list = []
+
     for line in script:
-        # match brackets and text between brackets
-        if re.match(audio_pattern, line):
-            # mvskoke audio
-            audio_list.append(get_mvskoke_audio(line, asset_dir))
+        line = line.strip()
+        if not line:
+            continue
+        elif re.search(audio_pattern, line):
+            # has mvskoke audio
+            phrases = split_audio(line)
+            for phrase in phrases:
+                phrase = phrase.strip()
+                phrase = phrase.strip('.')
+                phrase = phrase.strip(',')
+                if not phrase:
+                    continue
+                if re.match(audio_pattern, phrase):
+                    audio_list.append(get_mvskoke_audio(phrase, asset_dir))
+                else:
+                    if phrase:
+                        audio_list.append(get_en_audio(phrase, tts_dir, audio_dict))
         else:
             audio_list.append(get_en_audio(line, tts_dir, audio_dict))
-
-    print(audio_list)
 
     print("Compilation complete.")
     return audio_list
@@ -62,15 +96,9 @@ def render(audio_list, output_file):
     # combine audio files
     combined = pydub.AudioSegment.silent(duration=0)
     mini_silence = pydub.AudioSegment.silent(duration=100)
-    silence = pydub.AudioSegment.silent(duration=500)
     for a in audio_list:
-        if re.match(space, a):
-            for i in range(len(a)):
-                combined += silence
-        else:
-            audio = pydub.AudioSegment.from_file(a)
-            combined += audio
         combined += mini_silence
+        combined += a
     combined.export(output_file, format="wav")
 
     print("Exported to "+output_file)
